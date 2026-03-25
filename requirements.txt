@@ -1,0 +1,11 @@
+redis
+asyncio
+python-dotenv
+grpcio
+grpcio-tools
+nvidia-riva-client
+soundfile
+numpy
+python-clients
+protobuf
+pydantic-settings
