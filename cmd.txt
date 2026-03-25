@@ -1,0 +1,101 @@
+====================================================
+|       VOICE TRANSCRIPTION WITH REDIS QUEUE       |
+====================================================
+
+1) System architecture
+
+Multiple Clients (HTTP / App / Users)
+                │
+                ▼
+         Redis Job Queue
+                │
+                ▼
+        Async Worker Pool
+                │
+                ▼
+ Persistent gRPC Whisper Client (Singleton)
+                │
+                ▼
+     NVIDIA Whisper (Riva gRPC)
+                │
+                ▼
+        transcripts.json
+
+
+2) system data flow 
+
+User submits audio
+        в”‚
+        в–ј
+TranscriptionService
+        в”‚
+        в–ј
+Redis Queue (persistent)
+        в”‚
+        в–ј
+Async Workers
+        в”‚
+        в–ј
+Persistent gRPC Client
+        в”‚
+        в–ј
+NVIDIA Whisper
+        в”‚
+        в–ј
+transcripts.json
+
+
+3) Functional requirements
+
+✅ NVIDIA Whisper-large-v3 (build.nvidia.com)
+✅ Riva gRPC architecture
+✅ Persistent authenticated channel (NO .bat)
+✅ Redis queue for concurrency
+✅ Async workers
+✅ Multi-user safe transcription service
+
+
+4) tree root of project
+
+stt_service/
+│
+├── .env
+├── requirements.txt
+├── main.py
+│
+├── python-clients/        ← cloned NVIDIA repo
+│
+├── core/
+│   ├── config.py
+│   ├── grpc_client.py
+│   ├── transcription_service.py
+│   └── storage.py
+│
+├── queue/
+│   └── redis_queue.py
+│
+├── workers/
+│   └── async_worker.py
+│
+├── data/
+│   └── transcripts.json
+│
+└── docs/
+    └── ARCHITECTURE.md
+
+5) System of responsabilities
+
+| Class                | Responsibility    |
+| -------------------- | ----------------- |
+| Settings             | configuration     |
+| RedisQueue           | messaging         |
+| WhisperGRPCClient    | STT communication |
+| TranscriptStorage    | persistence       |
+| TranscriptionService | producer API      |
+| AsyncWorker          | consumer          |
+| Application          | orchestration     |
+
+
+6) connect with redis database
+
+redis://default:holtech_torch777@redis:6379/2
