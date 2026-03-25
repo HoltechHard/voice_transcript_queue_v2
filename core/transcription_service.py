@@ -1,94 +1,81 @@
-import subprocess
 import asyncio
-import os
-import re
-import sys
 from pathlib import Path
-
+from core.grpc_client import WhisperGRPCClient
 from core.config import settings
 
 
 class WhisperTranscriber:
     """
-    Adapter that executes the python-clients script via subprocess
-    to ensure perfect integration while removing .bat dependency.
+    High-level transcription service orchestrator.
+    
+    Responsibilities:
+    - Holds instance of persistent gRPC client (singleton)
+    - Orchestrates transcription operations (file reading, gRPC calls, result handling)
+    - Provides async/await interface for workers
+    - Uses language code from configuration
+    
+    Architecture:
+    - WhisperGRPCClient: Low-level gRPC connection management
+    - WhisperTranscriber: High-level transcription operation orchestration
     """
 
-    TRANSCRIPT_PATTERN = r"Final transcript:\s*(.+)"
-
-    def __init__(self):
-        # The user wants "pure python and GRPC persistent client with singleton"
-        # We handle this as a singleton service in the app.
-        pass
-
-    async def transcribe(self, audio_path: str):
+    def __init__(self, grpc_client: WhisperGRPCClient = None):
         """
-        Async entry point for the worker
+        Initialize transcription service.
+        
+        Args:
+            grpc_client: WhisperGRPCClient singleton instance.
+                        If None, creates/gets singleton instance.
         """
-        return await asyncio.to_thread(self._sync_transcribe, audio_path)
+        self.grpc_client = grpc_client or WhisperGRPCClient()
+        self.default_language_code = settings.language
 
-    def _sync_transcribe(self, audio_path: str):
+    async def transcribe(self, audio_path: str, language_code: str = None) -> str:
+        """
+        Async transcription operation using persistent gRPC client.
         
-        # 1. Prepare environment (as seen in user's example)
-        env = os.environ.copy()
+        This is the main entry point for workers.
+        No subprocess overhead, no process spawning.
+        Reuses persistent authenticated gRPC channels.
         
-        script_path = settings.script_path
-        if not script_path:
-            raise RuntimeError("SCRIPT_PATH not defined in .env")
-
-        # 2. Build command (mimicking run_whisper.bat)
-        # Using sys.executable to ensure we use the same virtual environment
-        cmd = [
-            sys.executable,
-            script_path,
-            "--server", settings.whisper_server,
-            "--use-ssl",
-            "--metadata", "function-id", settings.function_id,
-            "--metadata", "authorization", f"Bearer {settings.api_key}",
-            "--language-code", settings.language,
-            "--input-file", audio_path
-        ]
-
-        print(f">>> Executing: {' '.join(cmd)}")
-
-        # 3. Running subprocess
-        process = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace", # Use replace to avoid losing data on encoding issues
-            env=env
+        Args:
+            audio_path: Path to audio file
+            language_code: Language code (e.g., 'en-US', 'es-US'). 
+                          If None, uses LANGUAGE_CODE from .env
+        
+        Returns:
+            Transcript text
+        
+        Raises:
+            FileNotFoundError: If audio file doesn't exist
+            RuntimeError: If transcription fails or no service available
+        """
+        # Use configured language if not specified
+        lang_code = language_code or self.default_language_code
+        
+        # 1. Read audio file (blocking I/O in thread pool)
+        audio_data = await asyncio.to_thread(self._read_audio_file, audio_path)
+        
+        # 2. Execute transcription via persistent gRPC client (blocking call in thread pool)
+        result = await asyncio.to_thread(
+            self.grpc_client.transcribe_bytes,
+            audio_data,
+            self.grpc_client.create_recognition_config(lang_code)
         )
-
-
-        # 4. Extracting transcript
-        combined_output = (process.stdout or "") + "\n" + (process.stderr or "")
-
-        if process.returncode != 0:
-            print(f"!!! Script Error output: {combined_output}")
-            raise RuntimeError(f"Script failed with exit code {process.returncode}")
-
-        return self._extract_transcript(combined_output)
-
-    def _extract_transcript(self, output: str):
-        # normalize windows line endings
-        output = output.replace("\r", "")
         
-        # Find all matches (mimicking r.alternatives[0].transcript logic)
-        # Taking the last occurrence or joining them depends on script output.
-        # But usually offline_recognize returns one "Final transcript" line.
-        match = re.search(self.TRANSCRIPT_PATTERN, output)
+        # 3. Extract and return transcript
+        return self.grpc_client.extract_transcript_from_result(result)
 
-        if not match:
-            # Maybe the local Riva failed silently or returned nothing
-            if "ipv4:127.0.0.1:50051" in output and "connection refused" in output.lower():
-                 print("!!! Local Riva UNAVAILABLE in script output. Script should handle fallback.")
-            
-            raise RuntimeError(
-                "Transcript not found in script output.\n---- RAW OUTPUT ----\n"
-                + output
-            )
-
-        return match.group(1).strip()
+    def _read_audio_file(self, audio_path: str) -> bytes:
+        """
+        Read audio file into bytes.
+        
+        (Blocking operation - runs in thread executor when called via asyncio.to_thread)
+        """
+        path = Path(audio_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+        
+        with open(path, 'rb') as f:
+            return f.read()
     
