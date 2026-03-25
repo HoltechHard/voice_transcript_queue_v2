@@ -4,22 +4,17 @@
 
 1) System architecture
 
-Multiple Clients (HTTP / App / Users)
-                │
-                ▼
-         Redis Job Queue
-                │
-                ▼
-        Async Worker Pool
-                │
-                ▼
- Persistent gRPC Whisper Client (Singleton)
-                │
-                ▼
-     NVIDIA Whisper (Riva gRPC)
-                │
-                ▼
-        transcripts.json
+Multiple Clients (HTTP/App/Users)
+           ?
+    Redis Job Queue
+           ?
+   Async Worker Pool (10 workers)
+           ?
+Persistent gRPC Whisper Client (Singleton) ? Connection pooling
+           ?
+  NVIDIA Whisper (Riva gRPC)
+           ?
+   transcripts.json
 
 
 2) system data flow 
