@@ -1,1 +1,3 @@
-"# voice_transcript_queue_v2" 
+# System of voice transcript with scalability
+
+System of voice transcript using Redis Queue management + Persistent gRPC client for Whisper  
