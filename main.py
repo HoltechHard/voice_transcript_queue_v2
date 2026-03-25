@@ -4,31 +4,56 @@ from core.config import Settings
 from queue_manager.redis_queue import RedisQueue
 from core.grpc_client import WhisperGRPCClient
 from core.storage import TranscriptStorage
-from workers.async_worker import AsyncWorker
 from core.transcription_service import WhisperTranscriber
+from workers.async_worker import AsyncWorker
 
 
 class Application:
     """
     Main application orchestrator (OOP entrypoint)
+    
+    Architecture:
+    ?????????????????????????????????????????
+    Clients (HTTP/App/Users)
+             ?
+        Redis Job Queue
+             ?
+       Async Worker Pool
+             ?
+    WhisperTranscriber (orchestrates operations)
+             ?
+    WhisperGRPCClient (manages persistent connections) [Singleton]
+             ?
+      NVIDIA Whisper (Riva gRPC)
+             ?
+       transcripts.json
+    
+    Separation of Concerns:
+    - WhisperGRPCClient: Low-level gRPC connection management
+    - WhisperTranscriber: High-level transcription operation orchestration
+    - AsyncWorker: Job consumer (unaware of gRPC details)
     """
 
     def __init__(self):
         self.settings = Settings()
 
-        # Infrastructure
+        # Infrastructure layers
         self.queue = RedisQueue()
+        
+        # Persistent gRPC client singleton (connection pooling)
         self.grpc_client = WhisperGRPCClient()
+        
+        # Transcription service (holds gRPC client, orchestrates operations)
+        self.transcriber = WhisperTranscriber(grpc_client=self.grpc_client)
+        
+        # Storage
         self.storage = TranscriptStorage()
 
-        # Services
-        self.transcriber = WhisperTranscriber()
-
-        # Workers pool
+        # Workers pool - each uses same transcriber instance (which holds same gRPC client)
         self.workers = [
             AsyncWorker(
                 self.queue,
-                self.transcriber,
+                self.transcriber,  # Workers get transcription service
                 self.storage,
                 worker_id=i
             )
