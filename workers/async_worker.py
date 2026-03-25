@@ -1,15 +1,30 @@
 # workers/async_worker.py
 
 import asyncio
+import sys
 
 
 class AsyncWorker:
     """
-    Worker that consumes transcription jobs from Redis
-    and uses WhisperTranscriber.
+    Worker that consumes transcription jobs from Redis queue.
+    
+    Responsibilities:
+    - Pop jobs from Redis queue
+    - Delegate transcription to WhisperTranscriber
+    - Persist results to storage
+    
+    Decoupled from gRPC implementation details.
+    WhisperTranscriber handles all transcription orchestration.
     """
 
     def __init__(self, queue, transcriber, storage, worker_id=0):
+        """
+        Args:
+            queue: RedisQueue instance
+            transcriber: WhisperTranscriber instance (holds persistent gRPC client)
+            storage: TranscriptStorage instance
+            worker_id: Worker identifier
+        """
         self.queue = queue
         self.transcriber = transcriber
         self.storage = storage
@@ -17,17 +32,17 @@ class AsyncWorker:
 
     async def run(self):
         print(
-            f"[Worker-{self.worker_id}] Started and waiting for jobs on "
-            f"{self.queue.queue}..."
+            f"[Worker-{self.worker_id}] Started and waiting for jobs "
+            f"(using persistent gRPC client via transcriber)..."
         )
 
         while True:
             try:
-                # 1. Pop from Redis (this uses BLPOP, which is blocking)
+                # 1. Pop from Redis (BLPOP with timeout)
                 job = await self.queue.pop()
 
                 if not job:
-                    # Small sleep if blpop timeout occurs (timeout=5 in RedisQueue)
+                    # Small sleep if blpop timeout occurs
                     await asyncio.sleep(0.1)
                     continue
 
@@ -37,24 +52,22 @@ class AsyncWorker:
                 print(f"[Worker-{self.worker_id}] [{job_id}] Processing: {audio_path}")
 
                 try:
-                    # 2. Execute Transcription via WhisperTranscriber (subprocess)
+                    # 2. Execute transcription via WhisperTranscriber
+                    # WhisperTranscriber holds the persistent gRPC client instance
                     transcript = await self.transcriber.transcribe(audio_path)
 
                     # 3. Persist result
                     self.storage.save(job_id, transcript)
 
-                    # Use encode/decode with replace to avoid charmap errors on Windows console
-                    import sys
+                    # Handle encoding safely for Windows console
                     encoding = sys.stdout.encoding or 'utf-8'
                     safe_transcript = transcript.encode(encoding, errors='replace').decode(encoding)
                     
                     print(f"[Worker-{self.worker_id}] [{job_id}] DONE") 
-                    print(f"[Worker-{self.worker_id}] Transcription: {safe_transcript}")
+                    print(f"[Worker-{self.worker_id}] Transcript: {safe_transcript}")
 
-                except Exception as proc_error:
-                    print(
-                        f"[Worker-{self.worker_id}] [{job_id}] Processing Failed: {proc_error}"
-                    )
+                except Exception as e:
+                    print(f"[Worker-{self.worker_id}] [{job_id}] Transcription Failed: {e}")
 
             except Exception as e:
                 print(
